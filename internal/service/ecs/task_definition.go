@@ -269,6 +269,11 @@ func ResourceTaskDefinition() *schema.Resource {
 				ForceNew:     true,
 				ValidateFunc: verify.ValidARN,
 			},
+			"track_latest": {
+				Type:     schema.TypeBool,
+				Default:  false,
+				Optional: true,
+			},
 			"volume": {
 				Type:     schema.TypeSet,
 				Optional: true,
@@ -573,8 +578,14 @@ func resourceTaskDefinitionRead(ctx context.Context, d *schema.ResourceData, met
 
 	log.Printf("[DEBUG] Reading task definition %s", d.Id())
 
+	trackedTaskDefinition := aws.String(d.Get("arn").(string))
+	if v, ok := d.GetOk("track_latest"); ok && v.(bool) {
+		log.Printf("[DEBUG] Tracking latest ECS Task Definition")
+		trackedTaskDefinition = aws.String(d.Get("family").(string))
+	}
+
 	input := ecs.DescribeTaskDefinitionInput{
-		TaskDefinition: aws.String(d.Get("arn").(string)),
+		TaskDefinition: trackedTaskDefinition,
 		Include:        []*string{aws.String(ecs.TaskDefinitionFieldTags)},
 	}
 
