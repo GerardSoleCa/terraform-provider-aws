@@ -533,3 +533,95 @@ resource "aws_lambda_layer_version" "test" {
 }
 `, rName, compatRuntime)
 }
+
+func TestAccLambdaLayerVersion_trackLatest(t *testing.T) {
+	ctx := acctest.Context(t)
+	resourceName := "aws_lambda_layer_version.test"
+	rName := acctest.RandomWithPrefix(t, acctest.ResourcePrefix)
+
+	acctest.ParallelTest(ctx, t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(ctx, t) },
+		ErrorCheck:               acctest.ErrorCheck(t, names.LambdaServiceID),
+		ProtoV5ProviderFactories: acctest.ProtoV5ProviderFactories,
+		CheckDestroy:             testAccCheckLayerVersionDestroy(ctx, t),
+		Steps: []resource.TestStep{
+			{
+				Config: testAccLayerVersionConfig_trackLatest(rName),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckLayerVersionExists(ctx, t, resourceName),
+					resource.TestCheckResourceAttr(resourceName, "track_latest", acctest.CtTrue),
+					resource.TestCheckResourceAttr(resourceName, names.AttrVersion, "1"),
+					acctest.CheckResourceAttrRegionalARN(ctx, resourceName, names.AttrARN, "lambda", fmt.Sprintf("layer:%s:1", rName)),
+				),
+			},
+			{
+				ResourceName:            resourceName,
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"filename", names.AttrSkipDestroy, "track_latest"},
+			},
+		},
+	})
+}
+
+func TestAccLambdaLayerVersion_trackLatestExternalUpdate(t *testing.T) {
+	ctx := acctest.Context(t)
+	resourceName := "aws_lambda_layer_version.test"
+	rName := acctest.RandomWithPrefix(t, acctest.ResourcePrefix)
+
+	acctest.ParallelTest(ctx, t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(ctx, t) },
+		ErrorCheck:               acctest.ErrorCheck(t, names.LambdaServiceID),
+		ProtoV5ProviderFactories: acctest.ProtoV5ProviderFactories,
+		CheckDestroy:             testAccCheckLayerVersionDestroy(ctx, t),
+		Steps: []resource.TestStep{
+			{
+				Config: testAccLayerVersionConfig_trackLatest(rName),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckLayerVersionExists(ctx, t, resourceName),
+					resource.TestCheckResourceAttr(resourceName, "track_latest", acctest.CtTrue),
+					resource.TestCheckResourceAttr(resourceName, names.AttrVersion, "1"),
+					acctest.CheckResourceAttrRegionalARN(ctx, resourceName, names.AttrARN, "lambda", fmt.Sprintf("layer:%s:1", rName)),
+				),
+			},
+			{
+				// Simulate an external update by publishing a second version of the same layer.
+				// With track_latest=true the managed resource should reflect the new latest version.
+				Config: testAccLayerVersionConfig_trackLatestWithExternalVersion(rName),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckLayerVersionExists(ctx, t, resourceName),
+					resource.TestCheckResourceAttr(resourceName, "track_latest", acctest.CtTrue),
+					resource.TestCheckResourceAttr(resourceName, names.AttrVersion, "2"),
+					acctest.CheckResourceAttrRegionalARN(ctx, resourceName, names.AttrARN, "lambda", fmt.Sprintf("layer:%s:2", rName)),
+				),
+			},
+		},
+	})
+}
+
+func testAccLayerVersionConfig_trackLatest(rName string) string {
+	return fmt.Sprintf(`
+resource "aws_lambda_layer_version" "test" {
+  filename     = "test-fixtures/lambdatest.zip"
+  layer_name   = %[1]q
+  track_latest = true
+}
+`, rName)
+}
+
+func testAccLayerVersionConfig_trackLatestWithExternalVersion(rName string) string {
+	return fmt.Sprintf(`
+resource "aws_lambda_layer_version" "test" {
+  filename     = "test-fixtures/lambdatest.zip"
+  layer_name   = %[1]q
+  track_latest = true
+}
+
+resource "aws_lambda_layer_version" "external" {
+  filename   = "test-fixtures/lambdatest_modified.zip"
+  layer_name = %[1]q
+
+  depends_on = [aws_lambda_layer_version.test]
+}
+`, rName)
+}
