@@ -135,6 +135,11 @@ func resourceLayerVersion() *schema.Resource {
 				ForceNew: true,
 				Optional: true,
 			},
+			"track_latest": {
+				Type:     schema.TypeBool,
+				Default:  false,
+				Optional: true,
+			},
 			"source_code_hash": {
 				Type:     schema.TypeString,
 				Optional: true,
@@ -228,6 +233,16 @@ func resourceLayerVersionRead(ctx context.Context, d *schema.ResourceData, meta 
 		return sdkdiag.AppendFromErr(diags, err)
 	}
 
+	if d.Get("track_latest").(bool) {
+		latestVersion, err := findLatestLayerVersionNumber(ctx, conn, layerName)
+		if err != nil && !retry.NotFound(err) {
+			return sdkdiag.AppendErrorf(diags, "finding latest Lambda Layer (%s) Version: %s", layerName, err)
+		}
+		if err == nil {
+			versionNumber = latestVersion
+		}
+	}
+
 	output, err := findLayerVersionByTwoPartKey(ctx, conn, layerName, versionNumber)
 
 	if !d.IsNewResource() && retry.NotFound(err) {
@@ -253,6 +268,7 @@ func resourceLayerVersionRead(ctx context.Context, d *schema.ResourceData, meta 
 	d.Set("signing_profile_version_arn", output.Content.SigningProfileVersionArn)
 	d.Set("source_code_hash", d.Get("source_code_hash"))
 	d.Set("source_code_size", output.Content.CodeSize)
+	d.Set("track_latest", d.Get("track_latest"))
 	d.Set(names.AttrVersion, strconv.FormatInt(versionNumber, 10))
 
 	return diags
@@ -299,6 +315,31 @@ func layerVersionParseResourceID(id string) (layerName string, version int64, er
 	layerName = parts[1]
 	version, err = strconv.ParseInt(parts[2], 10, 64)
 	return
+}
+
+func findLatestLayerVersionNumber(ctx context.Context, conn *lambda.Client, layerName string) (int64, error) {
+	input := &lambda.ListLayerVersionsInput{
+		LayerName: aws.String(layerName),
+		MaxItems:  aws.Int32(1),
+	}
+
+	output, err := conn.ListLayerVersions(ctx, input)
+
+	if errs.IsA[*awstypes.ResourceNotFoundException](err) {
+		return 0, &retry.NotFoundError{
+			LastError: err,
+		}
+	}
+
+	if err != nil {
+		return 0, err
+	}
+
+	if len(output.LayerVersions) == 0 {
+		return 0, tfresource.NewEmptyResultError()
+	}
+
+	return output.LayerVersions[0].Version, nil
 }
 
 func findLayerVersionByTwoPartKey(ctx context.Context, conn *lambda.Client, layerName string, versionNumber int64) (*lambda.GetLayerVersionOutput, error) {
